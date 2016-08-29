@@ -7,7 +7,7 @@ This is intended to be run automatically when the Raspberry Pi boots. Control th
 
 ## Joystick Functions:
 
-* UP: Toggle low lght mode for LED matrix
+* UP: Toggle low light mode for LED matrix
 * DOWN: Shutdown the Pi
 * MIDDLE: Display Pi's IP address on LED matrix
 * LEFT: Begin data recording

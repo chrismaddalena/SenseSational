@@ -209,10 +209,10 @@ def main():
 						# Display a reference image
 						sense.load_image("space_invader.png")
 						if sense.low_light:
-							log.info("Toggling to Low brightness due to joystick UP input.")
+							log.info("Toggling to High brightness due to joystick UP input.")
 							sense.low_light = False
 						else:
-							log.info("Toggling to High brightness due to joystick UP input.")
+							log.info("Toggling to Low brightness due to joystick UP input.")
 							sense.low_light = True
 					# DOWN will run shutdown
 					elif event.direction == "down" and event.action == "held":
