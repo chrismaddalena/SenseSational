@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
+Copyright 2016, Chris Maddalena <cmaddy@chrismaddalena.com> 
+
 Small script to gather data using a Rasp PI and Sense HAT. Data is logged to
 a CSV file with a timestamp. Logging is continuous until recording is stopped.
 Then the log file is moved into a "Finished" directory.
@@ -38,7 +39,7 @@ filenamePrefix = None
 outputDirectory = "Finished"
 batch_data = []
 outputFD = None
-openedFileName = None
+currentFileName = None
 
 # Setup color values for display
 R = [255, 0, 0]  # Red
@@ -95,32 +96,33 @@ areYouSure = [
 if filenamePrefix is None:
 	filenamePrefix = "SenseLog"
 
-# Create directory for finished reports
-if not os.path.exists("Finished"):
+# Create directory for finished reports if it doesn't otherwise exist
+if not os.path.exists(outputDirectory):
 	try:
-		os.makedirs("Finished")
+		os.makedirs(outputDirectory)
 		log.info("Successfully created the Finished directory for CSV files.")
 	except:
 		log.critical("Failed to create Finished directory for final CSV files!")
-else:
-	log.info("The Finished directory exists, so no need toc reate new directory.")
+        sys.exit(-1)
+elif not os.path.isdir(outputDirectory):
+    log.critical("outputDirectory '{}' exists but is not a directory.".format(outputDirectory))
+    sys.exit(-1)
+    
 
 """
 Beginning of function definitons
 """
 
 # Setup for output CSV file - headers are the columns and match data collected in getSenseData()
-def fileSetup(prefix):
-	global openedFileName
-	header = ["temp_h","temp_p","humidity","pressure","pitch","roll","yaw","mag_x","mag_y","mag_z","gyro_x","gyro_y","gyro_z","timestamp"]
-	filename = "%s-%s.csv" % ( prefix, time.strftime('%Y%m%d_%H%M%S', time.localtime()))
-	openedFileName = filename
-	log.info("Opening file %s for writing." % filename)
-	record = open(filename, "w")
-	log.info("Recording file, {}, opened, waiting for joystick input to begin executing activites.".format(record))
-	record.write(",".join(repr(value) for value in header) + "\n")
+def fileSetup(outputFileName):
+	header = [ "temp_h", "temp_p", "humidity", "pressure", "pitch", "roll", "yaw", "mag_x", "mag_y", "mag_z", "gyro_x", "gyro_y", "gyro_z", "timestamp"]
+	log.info("Opening file {} for writing.".format(outputFileName))
+	outputFile = open(outputFileName, "w")
+	log.info("Recording file, {}, opened. Writing column headers.".format(record))
+	outputFile.write("{}\n".format(", ".join(repr(value) for value in header)))
+    
 	# Return the file descriptor
-	return record
+	return outputFile
 
 # Function to log collected data to the CSV file
 def logData(fd, sensedData):
@@ -139,41 +141,40 @@ def getSenseData():
 
 	# Orientation
 	o = sense.get_orientation()
-	yaw = o["yaw"]
-	pitch = o["pitch"]
-	roll = o["roll"]
-	sense_data.extend([pitch,roll,yaw])
+	sense_data.extend([o["pitch"],o["roll"],o["yaw"]])
 
 	# Magnetometer
 	mag = sense.get_compass_raw()
-	mag_x = mag["x"]
-	mag_y = mag["y"]
-	mag_z = mag["z"]
-	sense_data.extend([mag_x,mag_y,mag_z])
+	sense_data.extend([mag[x],mag[y],mag[z]])
 
 	# Accelerometer
 	acc = sense.get_accelerometer_raw()
-	acc_x = acc["x"]
-	acc_y = acc["y"]
-	acc_z = acc["z"]
-	sense_data.extend([acc_x,acc_y,acc_z])
+	sense_data.extend([acc[x],acc[y],acc[z]])
 
 	# Gyroscope
 	gyro = sense.get_gyroscope_raw()
-	gyro_x = gyro["x"]
-	gyro_y = gyro["y"]
-	gyro_z = gyro["x"]
+    sense_data.extend([gyro[x], gyro[y], gyro[z]]) 
 
 	# Add a timestamp for data collection
 	sense_data.append(datetime.datetime.now())
 
 	return sense_data
 
-# Get the IP address of the specified interface
+# Get the IPv4 address of the specified interface
 def getIPAddress(ifname):
-	log.info("Retrieved IP address of {}".format(ifname))
+	log.info("Retrieving IPv4 address of interface '{}'.".format(ifname))
+
+    # Open a socket of type DGRAM to request SIOCGIFADDR for the supplied ifname
+    #
+    # Expect Exception OSError with errno 19 (-ENODEV) if the indicated ifname does not exist or
+    # OSError with errno 99 (-EADDRNOTAVAIL) if the indicated ifname does not have an
+    # IPv4 address assigned.
+    # 
+    # Constant 0x8915 is SIOCGIFADDR.
 	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 	return socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s', bytes(ifname[:15], 'utf-8')))[20:24])
+
+currentFileName = None
 
 def main():
 	recordingState = False
@@ -183,57 +184,60 @@ def main():
 			if sense.stick._wait(2):
 				# Enumerate the events from the past 2 seconds
 				for event in sense.stick.get_events():
-					# LEFT begins recording
-					if event.direction == "left" and event.action == "pressed":
-						if not recordingState:
-							outputFD = fileSetup(filenamePrefix)
-							log.info("Switching to recording due to joystick LEFT input." )
-							sense.set_pixels(recording)
-						recordingState = True
-					# RIGHT sets recordingState to False and finalizes logging
-					elif event.direction == "right" and event.action == "pressed":
-						if recordingState:
-							outputFD.close()
-							os.rename(openedFileName, "{}/{}".format(outputDirectory, openedFileName))
-							log.info("Finishing recording due to right RIGHT input.")
-							sense.set_pixels(logged)
-							time.sleep(2)
-							sense.clear()
-						recordingState = False
-					# MIDDLE displays the Pi's IP address on the provided iface
-					elif event.direction == "middle" and event.action == "pressed":
-						ipAdd = getIPAddress('wlan0')
-						sense.show_message("IP: {}".format(ipAdd))
-					# UP toggle low light mode
-					elif event.direction == "up" and event.action == "pressed":
-						# Display a reference image
-						sense.load_image("space_invader.png")
-						if sense.low_light:
-							log.info("Toggling to High brightness due to joystick UP input.")
-							sense.low_light = False
-						else:
-							log.info("Toggling to Low brightness due to joystick UP input.")
-							sense.low_light = True
+                    if event.action == "pressed":
+                        # LEFT begins recording
+                        if event.direction == "left":
+                            if not recordingState:
+                                currentFileName = "{}-{}.csv".format(prefix, time.strftime('%Y%m%d_%H%M%S', time.localtime()))
+                                outputFD = fileSetup(currentFileName)
+                                log.info("Switching to recording due to joystick LEFT input." )
+                                sense.set_pixels(recording)
+                            recordingState = True
+                        # RIGHT sets recordingState to False and finalizes logging
+                        elif event.direction == "right":
+                            if recordingState:
+                                outputFD.close()
+                                os.rename(currentFileName, os.path.join(outputDirectory, currentFileName))
+                                log.info("Finishing recording due to right RIGHT input.")
+                                sense.set_pixels(logged)
+                                time.sleep(2)
+                                sense.set_pixels(ready)
+                            recordingState = False
+                        # MIDDLE displays the Pi's IP address on the provided iface
+                        elif event.direction == "middle":
+                            try:
+                                ipAdd = getIPAddress('wlan0')
+                                sense.show_message("IP: {}".format(ipAdd))
+                            except OSError as e:
+                                log.warn("Failed to retrive address for adapter wlan0 with OSError '{}'".format(e))
+                                sense.show_message("IP: none or error")
+                        # UP toggle low light mode
+                        elif event.direction == "up":
+                            # Display a reference image
+                            sense.load_image("space_invader.png")
+                            if sense.low_light:
+                                log.info("Toggling to High brightness due to joystick UP input.")
+                                sense.low_light = False
+                            else:
+                                log.info("Toggling to Low brightness due to joystick UP input.")
+                                sense.low_light = True
 					# DOWN will run shutdown
 					elif event.direction == "down" and event.action == "held":
 						log.warn("Shutdown command, holding DOWN joystick, was used!")
 						sense.set_pixels(areYouSure)
 						time.sleep(2)
 						userInput = sense.stick.wait_for_event()
-						if userInput.direction == "up" and userInput.action == "pressed":
+						if userInput.direction == "up" and (userInput.action == "pressed" or userInput.action == "held"):
 							sense.show_message("SHUTDOWN", back_colour=[255, 0, 0])
-							log.warn("User confirmed shutdown command - shutting down!")
 							if recordingState:
 								outputFD.close()
-								os.rename(openedFileName, "{}/{}".format(outputDirectory, openedFileName))
+								os.rename(currentFileName, os.path.join(outputDirectory, currentFileName))
+								recordingState = False
 								log.warn("Finished active recording due to shutdown command.")
 								sense.set_pixels(logged)
 								time.sleep(2)
-								recordingState = False
-								os.system("sudo shutdown -h now")
-							else:
-								log.warn("User confirmed shutdown command - shutting down!")
-								os.system("sudo shutdown -h now")
+                            log.warn("User confirmed shutdown command - shutting down!")
+                            os.system("sudo shutdown -h now")
 						if userInput.direction == "down" and userInput.action == "pressed":
 							sense.set_pixels(ready)
 							time.sleep(2)
@@ -248,16 +252,15 @@ def main():
 			# While recordingState is True, keep logging data
 			if recordingState:
 				log.info("Saving data at time {}.".format(time.ctime(time.time())))
-				sensedData = getSenseData()
-				logData(outputFD, sensedData)
+				logData(outputFD, getSenseData())
 
 	# No matter what happens to end script, clear the LEDs
 	finally:
 		sense.clear()
 
 """
-End of functiond defintions
-Begin execution
+End of function defintions.
+Begin execution.
 """
 
 if __name__ == "__main__":
